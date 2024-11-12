@@ -1,0 +1,16 @@
+{
+  "name": "syncron",
+  "version": "0.0.1",
+  "description": "Syncron is a command line tool",
+  "main": "dist/index.mjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && node ."
+  },
+  "keywords": [],
+  "author": "BM Monjur Morshed",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}
