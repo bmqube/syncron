@@ -1,6 +1,6 @@
 # Syncron
 
-### Syncron is a command-line tool for synchronizing data between different sources, such as databases.
+### Syncron is a command-line tool for synchronizing data between different databases.
 
 ## Installation
 
@@ -11,13 +11,19 @@ npm install -g syncron
 ```
 
 ## Usage
-To use `syncron`, run the following command in your terminal:
+- To use `syncron`, run the following command in your terminal:
 
-```
-syncron <source-uri> <destination-uri>
-```
+    ```
+    syncron sync <source-uri> <destination-uri>
+    ```
 
-Replace `<source-uri>` and `<destination-uri>` with the appropriate database connection URIs for your source and destination databases.
+    Replace `<source-uri>` and `<destination-uri>` with the appropriate database connection URIs for your source and destination databases.
+<br/>
+<br/>
+- To see the list of available adapters, run the following command in your terminal
+    ```
+    syncron list-adapters
+    ```
 
 ## Development
 To work on the syncron project, follow these steps:
