@@ -30,7 +30,7 @@ To work on the syncron project, follow these steps:
 
 1. Clone the repository:
     ```
-    git clone https://github.com/your-username/syncron.git
+    git clone https://github.com/bmqube/syncron.git
     ```
 
 2. Install dependencies:

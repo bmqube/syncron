@@ -1,6 +1,6 @@
 {
   "name": "syncron",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Syncron is a command line tool",
   "main": "dist/index.mjs",
   "bin": {
