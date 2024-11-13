@@ -1,6 +1,6 @@
 {
   "name": "syncron",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Syncron is a command line tool",
   "main": "dist/index.mjs",
   "bin": {
@@ -12,7 +12,13 @@
     "linkit": "npm run build && npm link",
     "dev": "nodemon --exec \"npm run linkit\" --watch \"src/**/*\" --ext \"mts,mjs\""
   },
-  "keywords": [],
+  "keywords": [
+    "syncron",
+    "database",
+    "sync",
+    "etl",
+    "cli"
+  ],
   "author": "BM Monjur Morshed",
   "license": "ISC",
   "devDependencies": {
