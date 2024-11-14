@@ -1,0 +1,31 @@
+services:
+  postgres:
+    container_name: syncron-postgres
+    restart: unless-stopped
+    image: postgres
+    ports:
+      - target: 5432
+        published: 5433
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-syncron}
+    volumes:
+      - ./_DATA/pgdata:/var/lib/postgresql/data
+    networks:
+      - syncron
+
+  mongo:
+    image: mongo:latest
+    ports:
+      - target: 27017
+        published: 27018
+    environment:
+      - MONGO_INITDB_DATABASE=your_database_name
+    volumes:
+      - ./_DATA/mongo:/data/db
+    logging:
+      driver: none
+
+networks:
+  syncron:
+    name: syncron
+    driver: bridge
