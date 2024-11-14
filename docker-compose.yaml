@@ -8,12 +8,15 @@ services:
         published: 5433
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-syncron}
+      POSTGRES_USER: ${POSTGRES_USER:-syncron}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-syncron}
     volumes:
       - ./_DATA/pgdata:/var/lib/postgresql/data
     networks:
       - syncron
 
   mongo:
+    container_name: syncron-mongo
     image: mongo:latest
     ports:
       - target: 27017

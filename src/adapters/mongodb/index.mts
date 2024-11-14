@@ -31,6 +31,8 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
             const db = this.client.db(this.db);
 
+            await db.dropDatabase();
+
             console.log(`Inserting data into database: '${this.db}'`);
 
 
