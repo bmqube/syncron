@@ -1,7 +1,7 @@
 {
   "name": "syncron",
   "version": "0.0.4",
-  "description": "Syncron is a command line tool",
+  "description": "Syncron is a command-line tool for synchronizing data between different databases.",
   "main": "dist/index.mjs",
   "bin": {
     "syncron": "./dist/index.mjs"
@@ -29,6 +29,7 @@
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
+    "mongodb": "^6.10.0",
     "pg": "^8.13.1"
   }
 }

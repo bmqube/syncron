@@ -11,10 +11,13 @@ const handleSync = async (sourceURI: string, destinationURI: string) => {
         // console.log(chalk.green(`Syncing data from ${sourceURI} to ${destinationURI}`));
 
         const sourceAdapter = createAdapter(sourceURI);
+        const destinationAdapter = createAdapter(destinationURI);
 
         await sourceAdapter.connect();
+        await destinationAdapter.connect();
 
-        await sourceAdapter.getData();
+        const data = await sourceAdapter.getData();
+        await destinationAdapter.insertData(data);
 
         process.exit(0);
     } catch (error) {
