@@ -1,6 +1,7 @@
 import type { Client as ClientType } from 'pg';
 import pg from 'pg';
-import { DatabaseAdapter, TableMetadataWithData } from '../../types.mjs';
+import { ColumnType, DatabaseAdapter, TableMetadataWithData } from '../../types.mjs';
+import { writeFileSync } from 'fs';
 
 const { Client } = pg;
 
@@ -25,7 +26,96 @@ export class PostgresAdapter implements DatabaseAdapter {
         await this.client.end();
     }
 
-    async getData(): Promise<TableMetadataWithData[]> {
+    private async truncateTables(): Promise<void> {
+        await this.client.query(`
+            DO $$
+            DECLARE
+                table_name TEXT;
+            BEGIN
+                FOR table_name IN
+                    SELECT tablename
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                LOOP
+                    EXECUTE format('TRUNCATE TABLE %I CASCADE;', table_name);
+                END LOOP;
+            END $$;
+        `)
+    };
+
+    private getSQLType(column: ColumnType): string {
+        let type = column.data_type;
+        if (column.character_maximum_length) {
+            type = `${type}(${column.character_maximum_length})`;
+        }
+
+        if (type.startsWith('_')) {
+            type = type.replace(/_/g, '');
+            type = `${type}[]`;
+        }
+        return type;
+    };
+
+    private parseJSONArray(data: any[]): string {
+        return data.map((item) => {
+            const jsonString = JSON.stringify(item);
+            const escapedJson = JSON.stringify(jsonString);
+            return escapedJson;
+        }).join(',');
+    }
+
+    private generateSQLForInsertingData(data: TableMetadataWithData[]): string {
+        let sql = '';
+
+        data.map(table => {
+            if (!table.data || table.data.length === 0) return;
+
+            const tableName = table.table_name;
+            const columnNames = Object.keys(table.data[0]).join(', ');
+
+            const values = table.data.map((row) => {
+                const rowValues = Object.entries(row).map(([key, value]) => {
+                    if (value === null) return 'NULL';
+
+                    const data_type = this.getSQLType(table.columns.find(col => col.column_name === key)!!);
+
+                    if (typeof value === 'object') {
+                        if (Array.isArray(value)) {
+                            if (data_type === 'json[]' || data_type === 'jsonb[]') {
+                                return `'{${this.parseJSONArray(value)}}'::${data_type}`;
+                            }
+                            return `'${JSON.stringify(value)}'::${data_type}`;
+                        }
+
+                        return `'${JSON.stringify(value)}'::${data_type}`;
+                    }
+
+
+
+                    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+
+                    return value;
+                });
+                writeFileSync('./test/row.json', JSON.stringify(row, null, 2));
+                writeFileSync('./test/rowValues.json', JSON.stringify(rowValues, null, 2));
+                return `(${rowValues.join(', ')})`;
+            }).join(',\n');
+
+            sql += `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
+        });
+
+        return sql;
+    }
+
+    private generateSQLForCreatingTables(tableName: string, data: ColumnType[]): string {
+        const columns = data.map(col => {
+            return `  ${col.column_name} ${col.data_type}`;
+        }).join(',\n');
+
+        return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
+    }
+
+    async getData(tableName: string | null): Promise<TableMetadataWithData[]> {
         try {
             await this.client.query(`BEGIN`);
 
@@ -36,16 +126,24 @@ export class PostgresAdapter implements DatabaseAdapter {
                     table_name,
                     json_agg(json_build_object(
                         'column_name', column_name,
-                        'data_type', data_type,
+                        'data_type', udt_name,
                         'character_maximum_length', character_maximum_length
                     )) as columns
                 FROM 
                     information_schema.columns
                 WHERE
-                    table_schema = $1
+                    table_schema = $1 AND
+                    table_name = COALESCE($2, table_name)
                 GROUP BY
                     table_name;
-            `, [this.schema]);
+            `, [this.schema, tableName]);
+
+            tableMetadata.map((table) => {
+                table.columns.map((column: ColumnType) => ({
+                    ...column,
+                    data_type: this.getSQLType(column)
+                }));
+            });
 
             const databaseData = await Promise.all(tableMetadata.map(async (table) => {
                 console.log(`Getting data from table: '${table.table_name}'`);
@@ -64,7 +162,8 @@ export class PostgresAdapter implements DatabaseAdapter {
             }));
 
             await this.client.query(`COMMIT`);
-            // console.log(JSON.stringify(databaseData, null, 2));
+
+            writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
             return databaseData;
@@ -77,5 +176,35 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
 
     async insertData(data: TableMetadataWithData[]): Promise<void> {
+        try {
+            console.log(`Inserting data into database: '${this.db}'`);
+
+            await this.truncateTables();
+
+            await this.client.query(`BEGIN`);
+
+            await Promise.all(data.map(async (table) => {
+                console.log(`Creating table: '${table.table_name}'`);
+
+                const tableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
+
+                await this.client.query(tableSQL);
+
+                console.log(`Inserting data into table: '${table.table_name}'`);
+
+                const dataSQL = this.generateSQLForInsertingData([table]);
+
+                await this.client.query(dataSQL);
+            }));
+
+            await this.client.query(`COMMIT`);
+
+            console.log(`Successfully inserted data into database: '${this.db}'`);
+        } catch (error) {
+            await this.client.query(`ROLLBACK`);
+            console.error(error);
+
+            throw new Error(`Error inserting data: ${error}`);
+        }
     }
 }

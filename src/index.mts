@@ -6,9 +6,9 @@ import { createAdapter } from './adapters/index.mjs';
 
 const commander = new Command();
 
-const handleSync = async (sourceURI: string, destinationURI: string) => {
+const handleSync = async (sourceURI: string, destinationURI: string, options: any) => {
     try {
-        // console.log(chalk.green(`Syncing data from ${sourceURI} to ${destinationURI}`));
+        console.log(chalk.green(`Syncing data from ${sourceURI} to ${destinationURI}`));
 
         const sourceAdapter = createAdapter(sourceURI);
         const destinationAdapter = createAdapter(destinationURI);
@@ -16,7 +16,7 @@ const handleSync = async (sourceURI: string, destinationURI: string) => {
         await sourceAdapter.connect();
         await destinationAdapter.connect();
 
-        const data = await sourceAdapter.getData();
+        const data = await sourceAdapter.getData(options.tableName);
         await destinationAdapter.insertData(data);
 
         process.exit(0);
@@ -40,6 +40,7 @@ commander
 
 commander
     .command('sync <sourceURI> <destinationURI>')
+    .option('-t, --table-name <tableName>', 'Overwrite destination data')
     .description('Sync data from a source URI to a destination URI')
     .action(handleSync);
 

@@ -19,6 +19,12 @@ npm install -g syncron
 
     Replace `<source-uri>` and `<destination-uri>` with the appropriate database connection URIs for your source and destination databases.
 
+- You can also transfer a single table by passing a optional parameter -t `<table-name>`. For example:
+
+    ```
+    syncron sync <source-uri> <destination-uri> -t <table-name>
+    ```
+
 - To see the list of available adapters, run the following command in your terminal:
   
     ```
