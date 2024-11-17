@@ -64,47 +64,37 @@ export class PostgresAdapter implements DatabaseAdapter {
         }).join(',');
     }
 
-    private generateSQLForInsertingData(data: TableMetadataWithData[]): string {
-        let sql = '';
+    private generateSQLForInsertingData(table: TableMetadataWithData): string {
+        if (!table.data || table.data.length === 0) return "";
 
-        data.map(table => {
-            if (!table.data || table.data.length === 0) return;
+        const tableName = table.table_name;
+        const columnNames = Object.keys(table.data[0]).join(', ');
 
-            const tableName = table.table_name;
-            const columnNames = Object.keys(table.data[0]).join(', ');
+        const values = table.data.map((row) => {
+            const rowValues = Object.entries(row).map(([key, value]) => {
+                if (value === null) return 'NULL';
 
-            const values = table.data.map((row) => {
-                const rowValues = Object.entries(row).map(([key, value]) => {
-                    if (value === null) return 'NULL';
+                const data_type = this.getSQLType(table.columns.find(col => col.column_name === key)!!);
 
-                    const data_type = this.getSQLType(table.columns.find(col => col.column_name === key)!!);
-
-                    if (typeof value === 'object') {
-                        if (Array.isArray(value)) {
-                            if (data_type === 'json[]' || data_type === 'jsonb[]') {
-                                return `'{${this.parseJSONArray(value)}}'::${data_type}`;
-                            }
-                            return `'${JSON.stringify(value)}'::${data_type}`;
+                if (typeof value === 'object') {
+                    if (Array.isArray(value)) {
+                        if (data_type === 'json[]' || data_type === 'jsonb[]') {
+                            return `'{${this.parseJSONArray(value)}}'::${data_type}`;
                         }
-
                         return `'${JSON.stringify(value)}'::${data_type}`;
                     }
 
+                    return `'${JSON.stringify(value)}'::${data_type}`;
+                }
 
+                if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
 
-                    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+                return value;
+            });
+            return `(${rowValues.join(', ')})`;
+        }).join(',\n');
 
-                    return value;
-                });
-                writeFileSync('./test/row.json', JSON.stringify(row, null, 2));
-                writeFileSync('./test/rowValues.json', JSON.stringify(rowValues, null, 2));
-                return `(${rowValues.join(', ')})`;
-            }).join(',\n');
-
-            sql += `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
-        });
-
-        return sql;
+        return `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
     }
 
     private generateSQLForCreatingTables(tableName: string, data: ColumnType[]): string {
@@ -186,15 +176,15 @@ export class PostgresAdapter implements DatabaseAdapter {
             await Promise.all(data.map(async (table) => {
                 console.log(`Creating table: '${table.table_name}'`);
 
-                const tableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
+                const createTableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
 
-                await this.client.query(tableSQL);
+                await this.client.query(createTableSQL);
 
                 console.log(`Inserting data into table: '${table.table_name}'`);
 
-                const dataSQL = this.generateSQLForInsertingData([table]);
+                const insertDataSQL = this.generateSQLForInsertingData(table);
 
-                await this.client.query(dataSQL);
+                await this.client.query(insertDataSQL);
             }));
 
             await this.client.query(`COMMIT`);
@@ -202,7 +192,6 @@ export class PostgresAdapter implements DatabaseAdapter {
             console.log(`Successfully inserted data into database: '${this.db}'`);
         } catch (error) {
             await this.client.query(`ROLLBACK`);
-            console.error(error);
 
             throw new Error(`Error inserting data: ${error}`);
         }
