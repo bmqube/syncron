@@ -17,4 +17,6 @@ export type ColumnType = {
     column_name: string;
     data_type: string;
     character_maximum_length: number;
+    is_nullable: 'YES' | 'NO';
+    column_default: string;
 }

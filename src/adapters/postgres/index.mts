@@ -26,23 +26,6 @@ export class PostgresAdapter implements DatabaseAdapter {
         await this.client.end();
     }
 
-    private async truncateTables(): Promise<void> {
-        await this.client.query(`
-            DO $$
-            DECLARE
-                table_name TEXT;
-            BEGIN
-                FOR table_name IN
-                    SELECT tablename
-                    FROM pg_tables
-                    WHERE schemaname = 'public'
-                LOOP
-                    EXECUTE format('TRUNCATE TABLE %I CASCADE;', table_name);
-                END LOOP;
-            END $$;
-        `)
-    };
-
     private getSQLType(column: ColumnType): string {
         let type = column.data_type;
         if (column.character_maximum_length) {
@@ -99,7 +82,25 @@ export class PostgresAdapter implements DatabaseAdapter {
 
     private generateSQLForCreatingTables(tableName: string, data: ColumnType[]): string {
         const columns = data.map(col => {
-            return `  ${col.column_name} ${col.data_type}`;
+            let columnDef = `  ${col.column_name} ${col.data_type}`;
+
+            if (col.is_nullable === 'NO') {
+                columnDef += ' NOT NULL';
+            }
+
+            if (col.column_default !== null) {
+                // Handle special cases like functions
+                if (col.column_default.includes('nextval(') ||
+                    col.column_default.includes('CURRENT_TIMESTAMP') ||
+                    col.column_default.includes('now()')) {
+                    columnDef += ` DEFAULT ${col.column_default}`;
+                } else {
+                    // Escape string defaults
+                    columnDef += ` DEFAULT '${col.column_default}'`;
+                }
+            }
+
+            return columnDef;
         }).join(',\n');
 
         return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
@@ -114,11 +115,16 @@ export class PostgresAdapter implements DatabaseAdapter {
             const { rows: tableMetadata } = await this.client.query(`
                 SELECT 
                     table_name,
-                    json_agg(json_build_object(
-                        'column_name', column_name,
-                        'data_type', udt_name,
-                        'character_maximum_length', character_maximum_length
-                    )) as columns
+                    json_agg(
+                        json_build_object(
+                            'column_name', column_name,
+                            'data_type', udt_name,
+                            'character_maximum_length', character_maximum_length,
+                            'is_nullable', is_nullable,
+                            'column_default', column_default
+                        )
+                        ORDER BY ordinal_position
+                    ) as columns
                 FROM 
                     information_schema.columns
                 WHERE
@@ -153,7 +159,7 @@ export class PostgresAdapter implements DatabaseAdapter {
 
             await this.client.query(`COMMIT`);
 
-            writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
+            // writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
             return databaseData;
@@ -169,11 +175,11 @@ export class PostgresAdapter implements DatabaseAdapter {
         try {
             console.log(`Inserting data into database: '${this.db}'`);
 
-            await this.truncateTables();
-
             await this.client.query(`BEGIN`);
 
             await Promise.all(data.map(async (table) => {
+                await this.client.query(`DROP TABLE IF EXISTS ${table.table_name} CASCADE`);
+
                 console.log(`Creating table: '${table.table_name}'`);
 
                 const createTableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
