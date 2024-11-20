@@ -226,9 +226,11 @@ export class PostgresAdapter implements DatabaseAdapter {
                         MINVALUE ${sequence.minimum_value}
                         MAXVALUE ${sequence.maximum_value}
                         INCREMENT BY ${sequence.increment_by}
-                        CYCLE ${sequence.cycle_option}
+                        ${sequence.cycle_option ? 'CYCLE' : 'NO CYCLE'}
                         CACHE 1;
                 `;
+
+                appendFileSync('./test/sequence.sql', createSequenceSQL);
 
                 await this.client.query(createSequenceSQL);
             }));
