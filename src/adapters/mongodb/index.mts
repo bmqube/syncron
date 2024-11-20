@@ -1,5 +1,5 @@
 import { MongoClient } from 'mongodb';
-import { DatabaseAdapter, TableMetadataWithData } from '../../types.mjs';
+import { DatabaseAdapter, DatabaseType, TableMetadataWithData } from '../../types.mjs';
 
 export class MongoDBAdapter implements DatabaseAdapter {
     private client: MongoClient;
@@ -22,11 +22,15 @@ export class MongoDBAdapter implements DatabaseAdapter {
         await this.client.close();
     }
 
-    async getData(): Promise<TableMetadataWithData[]> {
-        return [];
+    async getData(): Promise<DatabaseType> {
+        return {
+            name: this.db,
+            userDefinedEnumTypes: [],
+            tables: [],
+        };
     }
 
-    async insertData(data: TableMetadataWithData[]): Promise<void> {
+    async insertData(data: DatabaseType): Promise<void> {
         try {
 
             const db = this.client.db(this.db);
@@ -36,7 +40,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
             console.log(`Inserting data into database: '${this.db}'`);
 
 
-            await Promise.all(data.map(async (table) => {
+            await Promise.all(data.tables.map(async (table) => {
                 console.log(`Inserting data into collection: '${table.table_name}'`);
 
                 const collection = db.collection(table.table_name);

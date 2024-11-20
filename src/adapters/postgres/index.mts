@@ -1,7 +1,7 @@
 import type { Client as ClientType } from 'pg';
 import pg from 'pg';
-import { ColumnType, DatabaseAdapter, TableMetadataWithData } from '../../types.mjs';
-import { writeFileSync } from 'fs';
+import { ColumnType, DatabaseAdapter, DatabaseType, TableMetadataWithData, UserDefinedEnumTypes } from '../../types.mjs';
+import { appendFileSync, writeFileSync } from 'fs';
 
 const { Client } = pg;
 
@@ -77,6 +77,8 @@ export class PostgresAdapter implements DatabaseAdapter {
             return `(${rowValues.join(', ')})`;
         }).join(',\n');
 
+        // appendFileSync('./test/insert.sql', `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`);
+
         return `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
     }
 
@@ -89,24 +91,18 @@ export class PostgresAdapter implements DatabaseAdapter {
             }
 
             if (col.column_default !== null) {
-                // Handle special cases like functions
-                if (col.column_default.includes('nextval(') ||
-                    col.column_default.includes('CURRENT_TIMESTAMP') ||
-                    col.column_default.includes('now()')) {
-                    columnDef += ` DEFAULT ${col.column_default}`;
-                } else {
-                    // Escape string defaults
-                    columnDef += ` DEFAULT '${col.column_default}'`;
-                }
+                columnDef += ` DEFAULT ${col.column_default}`;
             }
 
             return columnDef;
         }).join(',\n');
 
+        // appendFileSync('./test/create.sql', `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`);
+
         return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
     }
 
-    async getData(tableName: string | null): Promise<TableMetadataWithData[]> {
+    async getData(tableName: string | null): Promise<DatabaseType> {
         try {
             await this.client.query(`BEGIN`);
 
@@ -129,17 +125,24 @@ export class PostgresAdapter implements DatabaseAdapter {
                     information_schema.columns
                 WHERE
                     table_schema = $1 AND
-                    table_name = COALESCE($2, table_name)
+                    ($2::text IS NULL OR table_name = $2)
                 GROUP BY
                     table_name;
             `, [this.schema, tableName]);
 
-            tableMetadata.map((table) => {
-                table.columns.map((column: ColumnType) => ({
-                    ...column,
-                    data_type: this.getSQLType(column)
-                }));
-            });
+            const userDefinedEnumTypes = (await this.client.query(`
+                SELECT 
+                    t.typname as typename,
+                    array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels
+                FROM pg_type t
+                JOIN pg_enum e ON t.oid = e.enumtypid
+                JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+                WHERE n.nspname = 'public'
+                GROUP BY t.typname;    
+            `)).rows.map((row) => ({
+                typename: row.typename,
+                labels: row.labels.replace(/{|}/g, '').split(',')
+            }));
 
             const databaseData = await Promise.all(tableMetadata.map(async (table) => {
                 console.log(`Getting data from table: '${table.table_name}'`);
@@ -153,16 +156,26 @@ export class PostgresAdapter implements DatabaseAdapter {
 
                 return {
                     ...table,
+                    columns: table.columns.map((column: ColumnType) => ({
+                        ...column,
+                        data_type: this.getSQLType(column)
+                    })),
                     data: tableData
                 }
             }));
 
             await this.client.query(`COMMIT`);
 
-            // writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
+            const finalData: DatabaseType = {
+                name: this.db,
+                userDefinedEnumTypes: userDefinedEnumTypes,
+                tables: databaseData
+            };
+
+            // writeFileSync('./test/data.json', JSON.stringify(finalData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
-            return databaseData;
+            return finalData
         } catch (error) {
             await this.client.query(`ROLLBACK`);
             console.error(error);
@@ -171,13 +184,24 @@ export class PostgresAdapter implements DatabaseAdapter {
         }
     }
 
-    async insertData(data: TableMetadataWithData[]): Promise<void> {
+    async insertData(data: DatabaseType): Promise<void> {
         try {
             console.log(`Inserting data into database: '${this.db}'`);
 
             await this.client.query(`BEGIN`);
 
-            await Promise.all(data.map(async (table) => {
+            await Promise.all(data.userDefinedEnumTypes.map(async (enumType) => {
+                console.log(`Creating type: '${enumType.typename}'`);
+
+                const createEnumSQL = `
+                DROP TYPE IF EXISTS ${enumType.typename};
+                CREATE TYPE ${enumType.typename} AS ENUM 
+                    (${enumType.labels.map(label => `'${label}'`).join(', ')});`;
+
+                await this.client.query(createEnumSQL);
+            }));
+
+            await Promise.all(data.tables.map(async (table) => {
                 await this.client.query(`DROP TABLE IF EXISTS ${table.table_name} CASCADE`);
 
                 console.log(`Creating table: '${table.table_name}'`);
@@ -186,11 +210,11 @@ export class PostgresAdapter implements DatabaseAdapter {
 
                 await this.client.query(createTableSQL);
 
-                console.log(`Inserting data into table: '${table.table_name}'`);
+                // console.log(`Inserting data into table: '${table.table_name}'`);
 
                 const insertDataSQL = this.generateSQLForInsertingData(table);
 
-                await this.client.query(insertDataSQL);
+                // await this.client.query(insertDataSQL);
             }));
 
             await this.client.query(`COMMIT`);
