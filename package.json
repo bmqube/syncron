@@ -1,6 +1,6 @@
 {
   "name": "syncron",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "Syncron is a command-line tool for synchronizing data between different databases.",
   "main": "dist/index.mjs",
   "bin": {
