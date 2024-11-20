@@ -1,6 +1,6 @@
 import type { Client as ClientType } from 'pg';
 import pg from 'pg';
-import { ColumnType, DatabaseAdapter, DatabaseType, TableMetadataWithData, UserDefinedEnumTypes } from '../../types.mjs';
+import { ColumnType, DatabaseAdapter, DatabaseType, IndexType, TableMetadataWithData, UserDefinedEnumTypes } from '../../types.mjs';
 import { appendFileSync, writeFileSync } from 'fs';
 
 const { Client } = pg;
@@ -86,6 +86,10 @@ export class PostgresAdapter implements DatabaseAdapter {
         const columns = data.map(col => {
             let columnDef = `  ${col.column_name} ${col.data_type}`;
 
+            if (col.is_primary) {
+                columnDef += ' PRIMARY KEY';
+            }
+
             if (col.is_nullable === 'NO') {
                 columnDef += ' NOT NULL';
             }
@@ -94,13 +98,30 @@ export class PostgresAdapter implements DatabaseAdapter {
                 columnDef += ` DEFAULT ${col.column_default}`;
             }
 
+            if (col.foreign_key) {
+                columnDef += ` REFERENCES ${col.foreign_key.table_name}(${col.foreign_key.column_name})`;
+            }
+
+            if (col.is_unique) {
+                columnDef += ' UNIQUE';
+            }
+
             return columnDef;
         }).join(',\n');
 
-        // appendFileSync('./test/create.sql', `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`);
+        appendFileSync('./test/create.sql', `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`);
 
         return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
     }
+
+    private generateSQLForCreatingIndexes(index: IndexType): string {
+        const indexStatement = `CREATE ${index.is_unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${index.index_name} ON ${index.table_name} USING ${index.index_type} (${index.column_name});`;
+
+        appendFileSync('./test/index.sql', `${indexStatement}\n\n`);
+
+        return indexStatement;
+    }
+
 
     async getData(tableName: string | null): Promise<DatabaseType> {
         try {
@@ -108,27 +129,112 @@ export class PostgresAdapter implements DatabaseAdapter {
 
             console.log(`Getting metadata from database: '${this.db}'`);
 
+            // const { rows: tableMetadata } = await this.client.query(`
+            //     SELECT 
+            //         table_name,
+            //         json_agg(
+            //             json_build_object(
+            //                 'column_name', column_name,
+            //                 'data_type', udt_name,
+            //                 'character_maximum_length', character_maximum_length,
+            //                 'is_nullable', is_nullable,
+            //                 'column_default', column_default
+            //             )
+            //             ORDER BY ordinal_position
+            //         ) as columns
+            //     FROM 
+            //         information_schema.columns
+            //     WHERE
+            //         table_schema = $1 AND
+            //         ($2::text IS NULL OR table_name = $2)
+            //     GROUP BY
+            //         table_name;
+            // `, [this.schema, tableName]);
+
             const { rows: tableMetadata } = await this.client.query(`
+                WITH 
+                primary_key_columns AS (
+                    SELECT 
+                        tc.table_name, 
+                        kcu.column_name as pk_column
+                    FROM 
+                        information_schema.table_constraints tc
+                    JOIN 
+                        information_schema.key_column_usage kcu 
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    WHERE 
+                        tc.constraint_type = 'PRIMARY KEY'
+                        AND tc.table_schema = $1
+                ),
+                foreign_key_columns AS (
+                    SELECT 
+                        tc.table_name, 
+                        kcu.column_name as fk_column,
+                        json_build_object(
+                            'table_name', ccu.table_name,
+                            'column_name', ccu.column_name
+                        ) as foreign_key_info
+                    FROM 
+                        information_schema.table_constraints tc
+                    JOIN 
+                        information_schema.key_column_usage kcu 
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    JOIN 
+                        information_schema.constraint_column_usage ccu 
+                        ON tc.constraint_name = ccu.constraint_name
+                        AND tc.table_schema = ccu.table_schema
+                    WHERE 
+                        tc.constraint_type = 'FOREIGN KEY'
+                        AND tc.table_schema = $1
+                ),
+                unique_constraint_columns AS (
+                    SELECT 
+                        tc.table_name, 
+                        kcu.column_name as unique_column
+                    FROM 
+                        information_schema.table_constraints tc
+                    JOIN 
+                        information_schema.key_column_usage kcu 
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    WHERE 
+                        tc.constraint_type = 'UNIQUE'
+                        AND tc.table_schema = $1
+                )
+
                 SELECT 
-                    table_name,
+                    c.table_name,
                     json_agg(
                         json_build_object(
-                            'column_name', column_name,
-                            'data_type', udt_name,
-                            'character_maximum_length', character_maximum_length,
-                            'is_nullable', is_nullable,
-                            'column_default', column_default
+                            'column_name', c.column_name,
+                            'data_type', c.udt_name,
+                            'character_maximum_length', c.character_maximum_length,
+                            'is_nullable', c.is_nullable,
+                            'column_default', c.column_default,
+                            'is_primary', COALESCE(pk.pk_column IS NOT NULL, false),
+                            'is_foreign', fk.foreign_key_info,
+                            'is_unique', COALESCE(uc.unique_column IS NOT NULL, false)
                         )
-                        ORDER BY ordinal_position
+                        ORDER BY c.ordinal_position
                     ) as columns
                 FROM 
-                    information_schema.columns
+                    information_schema.columns c
+                LEFT JOIN primary_key_columns pk 
+                    ON c.column_name = pk.pk_column AND c.table_name = pk.table_name
+                LEFT JOIN foreign_key_columns fk 
+                    ON c.column_name = fk.fk_column AND c.table_name = fk.table_name
+                LEFT JOIN unique_constraint_columns uc 
+                    ON c.column_name = uc.unique_column AND c.table_name = uc.table_name
                 WHERE
-                    table_schema = $1 AND
-                    ($2::text IS NULL OR table_name = $2)
+                    c.table_schema = $1 AND
+                    ($2::text IS NULL OR c.table_name = $2)
                 GROUP BY
-                    table_name;
-            `, [this.schema, tableName]);
+                    c.table_name
+                `, [this.schema, tableName]);
+
+            // writeFileSync('./test/metadata.json', JSON.stringify(tableMetadata, null, 2));
 
             const userDefinedEnumTypes = (await this.client.query(`
                 SELECT 
@@ -159,6 +265,28 @@ export class PostgresAdapter implements DatabaseAdapter {
 
             // writeFileSync('./test/sequences.json', JSON.stringify(sequences, null, 2));
 
+            const indexes = (await this.client.query(`
+                SELECT 
+                    tablename as table_name,
+                    indexname as index_name,
+                    indexdef as index_def
+                FROM 
+                    pg_indexes
+                WHERE 
+                    schemaname = $1
+            `, [this.schema])).rows.map(index => {
+                const matches = index.index_def.match(/CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+\.)?(\w+)\s+USING\s+(\w+)\s+(.+)$/i);
+                return {
+                    index_name: matches[2],
+                    column_name: matches[6].replace('(', '').replace(')', ''),
+                    table_name: matches[4],
+                    is_unique: matches[1] ? true : false,
+                    index_type: matches[5]
+                }
+            });
+
+            // writeFileSync('./test/indexes.json', JSON.stringify(indexes, null, 2));
+
             const databaseData = await Promise.all(tableMetadata.map(async (table) => {
                 console.log(`Getting data from table: '${table.table_name}'`);
 
@@ -185,6 +313,7 @@ export class PostgresAdapter implements DatabaseAdapter {
                 name: this.db,
                 userDefinedEnumTypes: userDefinedEnumTypes,
                 sequences: sequences,
+                indexes: indexes,
                 tables: databaseData
             };
 
@@ -230,7 +359,7 @@ export class PostgresAdapter implements DatabaseAdapter {
                         CACHE 1;
                 `;
 
-                appendFileSync('./test/sequence.sql', createSequenceSQL);
+                // appendFileSync('./test/sequence.sql', createSequenceSQL);
 
                 await this.client.query(createSequenceSQL);
             }));
@@ -248,7 +377,15 @@ export class PostgresAdapter implements DatabaseAdapter {
 
                 const insertDataSQL = this.generateSQLForInsertingData(table);
 
-                // await this.client.query(insertDataSQL);
+                await this.client.query(insertDataSQL);
+            }));
+
+            await Promise.all(data.indexes.map(async (index) => {
+                console.log(`Creating index: '${index.index_name}'`);
+
+                const createIndexSQL = this.generateSQLForCreatingIndexes(index);
+
+                await this.client.query(createIndexSQL);
             }));
 
             await this.client.query(`COMMIT`);

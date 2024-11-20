@@ -27,6 +27,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
             name: this.db,
             userDefinedEnumTypes: [],
             sequences: [],
+            indexes: [],
             tables: [],
         };
     }
@@ -39,7 +40,6 @@ export class MongoDBAdapter implements DatabaseAdapter {
             await db.dropDatabase();
 
             console.log(`Inserting data into database: '${this.db}'`);
-
 
             await Promise.all(data.tables.map(async (table) => {
                 console.log(`Inserting data into collection: '${table.table_name}'`);
