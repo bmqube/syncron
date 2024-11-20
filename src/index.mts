@@ -8,7 +8,7 @@ const commander = new Command();
 
 const handleSync = async (sourceURI: string, destinationURI: string, options: any) => {
     try {
-        console.log(chalk.green(`Syncing data from ${sourceURI} to ${destinationURI}`));
+        console.log(`Syncing data from ${chalk.gray(sourceURI)} to ${chalk.gray(destinationURI)}`);
 
         const sourceAdapter = createAdapter(sourceURI);
         const destinationAdapter = createAdapter(destinationURI);
@@ -40,7 +40,7 @@ commander
 
 commander
     .command('sync <sourceURI> <destinationURI>')
-    .option('-t, --table-name <tableName>', 'Overwrite destination data')
+    .option('-t, --table-name <tableName>', 'Only copy data from a specific table')
     .description('Sync data from a source URI to a destination URI')
     .action(handleSync);
 

@@ -16,6 +16,7 @@ export type TableMetadataWithData = {
 export type DatabaseType = {
     name: string;
     userDefinedEnumTypes: UserDefinedEnumTypes[];
+    sequences: Sequences[];
     tables: TableMetadataWithData[];
 }
 
@@ -25,6 +26,17 @@ export type ColumnType = {
     character_maximum_length: number;
     is_nullable: 'YES' | 'NO';
     column_default: string;
+}
+
+export type Sequences = {
+    sequence_name: string,
+    start_value: string,
+    minimum_value: string,
+    maximum_value: string,
+    increment_by: string,
+    cycle_option: boolean,
+    data_type: string,
+    last_value: string
 }
 
 export type UserDefinedEnumTypes = {

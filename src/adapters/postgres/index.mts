@@ -144,6 +144,21 @@ export class PostgresAdapter implements DatabaseAdapter {
                 labels: row.labels.replace(/{|}/g, '').split(',')
             }));
 
+            const sequences = (await this.client.query(`
+                SELECT 
+                    sequencename as sequence_name,
+                    start_value,
+                    min_value as minimum_value,
+                    max_value as maximum_value,
+                    increment_by,
+                    cycle as cycle_option,
+                    last_value
+                FROM pg_sequences
+                WHERE schemaname = $1;
+            `, [this.schema])).rows;
+
+            // writeFileSync('./test/sequences.json', JSON.stringify(sequences, null, 2));
+
             const databaseData = await Promise.all(tableMetadata.map(async (table) => {
                 console.log(`Getting data from table: '${table.table_name}'`);
 
@@ -169,10 +184,11 @@ export class PostgresAdapter implements DatabaseAdapter {
             const finalData: DatabaseType = {
                 name: this.db,
                 userDefinedEnumTypes: userDefinedEnumTypes,
+                sequences: sequences,
                 tables: databaseData
             };
 
-            // writeFileSync('./test/data.json', JSON.stringify(finalData, null, 2));
+            writeFileSync('./test/data.json', JSON.stringify(finalData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
             return finalData
@@ -199,6 +215,22 @@ export class PostgresAdapter implements DatabaseAdapter {
                     (${enumType.labels.map(label => `'${label}'`).join(', ')});`;
 
                 await this.client.query(createEnumSQL);
+            }));
+
+            await Promise.all(data.sequences.map(async (sequence) => {
+                console.log(`Creating sequence: '${sequence.sequence_name}'`);
+
+                const createSequenceSQL = `
+                    CREATE SEQUENCE IF NOT EXISTS ${sequence.sequence_name}
+                        START WITH ${sequence.start_value}
+                        MINVALUE ${sequence.minimum_value}
+                        MAXVALUE ${sequence.maximum_value}
+                        INCREMENT BY ${sequence.increment_by}
+                        CYCLE ${sequence.cycle_option}
+                        CACHE 1;
+                `;
+
+                await this.client.query(createSequenceSQL);
             }));
 
             await Promise.all(data.tables.map(async (table) => {
