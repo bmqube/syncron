@@ -1,6 +1,6 @@
 import type { Client as ClientType } from 'pg';
 import pg from 'pg';
-import { ColumnType, DatabaseAdapter, DatabaseType, IndexType, TableMetadataWithData, UserDefinedEnumTypes } from '../../types.mjs';
+import { ColumnType, DatabaseAdapter, DatabaseType, IndexType, Sequences, TableMetadataWithData, UserDefinedEnumTypes, ViewType } from '../../types.mjs';
 import { appendFileSync, writeFileSync } from 'fs';
 
 const { Client } = pg;
@@ -47,41 +47,6 @@ export class PostgresAdapter implements DatabaseAdapter {
         }).join(',');
     }
 
-    private generateSQLForInsertingData(table: TableMetadataWithData): string {
-        if (!table.data || table.data.length === 0) return "";
-
-        const tableName = table.table_name;
-        const columnNames = Object.keys(table.data[0]).join(', ');
-
-        const values = table.data.map((row) => {
-            const rowValues = Object.entries(row).map(([key, value]) => {
-                if (value === null) return 'NULL';
-
-                const data_type = this.getSQLType(table.columns.find(col => col.column_name === key)!!);
-
-                if (typeof value === 'object') {
-                    if (Array.isArray(value)) {
-                        if (data_type === 'json[]' || data_type === 'jsonb[]') {
-                            return `'{${this.parseJSONArray(value)}}'::${data_type}`;
-                        }
-                        return `'${JSON.stringify(value)}'::${data_type}`;
-                    }
-
-                    return `'${JSON.stringify(value)}'::${data_type}`;
-                }
-
-                if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
-
-                return value;
-            });
-            return `(${rowValues.join(', ')})`;
-        }).join(',\n');
-
-        // appendFileSync('./test/insert.sql', `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`);
-
-        return `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
-    }
-
     private generateSQLForCreatingTables(tableName: string, data: ColumnType[]): string {
         const columns = data.map(col => {
             let columnDef = `  ${col.column_name} ${col.data_type}`;
@@ -114,6 +79,42 @@ export class PostgresAdapter implements DatabaseAdapter {
         return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
     }
 
+    private generateSQLForInsertingData(table: TableMetadataWithData): string {
+        if (!table.data || table.data.length === 0) return "";
+
+        const tableName = table.table_name;
+        const columnNames = Object.keys(table.data[0]).join(', ');
+
+        const values = table.data.map((row) => {
+            const rowValues = Object.entries(row).map(([key, value]) => {
+                if (value === null) return 'NULL';
+
+                const data_type = this.getSQLType(table.columns.find(col => col.column_name === key)!!);
+
+                if (typeof value === 'object') {
+                    if (Array.isArray(value)) {
+                        if (data_type === 'json[]' || data_type === 'jsonb[]') {
+                            return `'{${this.parseJSONArray(value)}}'::${data_type}`;
+                        }
+
+                        return `'{${value.join(',')}}'::${data_type}`;
+                    }
+
+                    return `'${JSON.stringify(value)}'::${data_type}`;
+                }
+
+                if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+
+                return value;
+            });
+            return `(${rowValues.join(', ')})`;
+        }).join(',\n');
+
+        // appendFileSync('./test/insert.sql', `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`);
+
+        return `INSERT INTO ${tableName} (${columnNames}) VALUES\n${values};\n\n`;
+    }
+
     private generateSQLForCreatingIndexes(index: IndexType): string {
         const indexStatement = `CREATE ${index.is_unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${index.index_name} ON ${index.table_name} USING ${index.index_type} (${index.column_name});`;
 
@@ -122,6 +123,95 @@ export class PostgresAdapter implements DatabaseAdapter {
         return indexStatement;
     }
 
+    private generateSQLForCreatingViews(view: ViewType): string {
+        return `
+                    DROP VIEW IF EXISTS ${view.name} CASCADE;
+                    CREATE VIEW ${view.name} AS ${view.definition};
+                `;
+    }
+
+    private generateSQLForEnums(userDefinedEnumType: UserDefinedEnumTypes): string {
+        const labels = userDefinedEnumType.labels.map(label => `'${label}'`).join(', '); // 'label1', 'label2', 'label3'
+        return `
+            DROP TYPE IF EXISTS ${userDefinedEnumType.typename};
+            CREATE TYPE 
+                ${userDefinedEnumType.typename} AS ENUM 
+            (${labels});`;
+    }
+
+    private generateSQLForDropTables(tables: TableMetadataWithData[]): string {
+        return tables.map(table => `DROP TABLE IF EXISTS ${table.table_name} CASCADE;`).join('\n');
+    }
+
+    private async dropEverything(data: DatabaseType): Promise<void> {
+        // Drop all tables
+        const dropTablesSQL = this.generateSQLForDropTables(data.tables);
+        await this.client.query(dropTablesSQL);
+    }
+
+    private async createEnumTypes(userDefinedEnumTypes: UserDefinedEnumTypes[]): Promise<void> {
+        await Promise.all(userDefinedEnumTypes.map(async (enumType) => {
+            console.log(`Creating type: '${enumType.typename}'`);
+
+            const createEnumSQL = this.generateSQLForEnums(enumType);
+
+            await this.client.query(createEnumSQL);
+        }));
+    }
+
+    private async createSequences(sequences: Sequences[]): Promise<void> {
+        await Promise.all(sequences.map(async (sequence) => {
+            console.log(`Creating sequence: '${sequence.sequence_name}'`);
+
+            const createSequenceSQL = `
+                    CREATE SEQUENCE IF NOT EXISTS ${sequence.sequence_name}
+                        START WITH ${sequence.start_value}
+                        MINVALUE ${sequence.minimum_value}
+                        MAXVALUE ${sequence.maximum_value}
+                        INCREMENT BY ${sequence.increment_by}
+                        ${sequence.cycle_option ? 'CYCLE' : 'NO CYCLE'}
+                        CACHE 1;
+                `;
+
+            // appendFileSync('./test/sequence.sql', createSequenceSQL);
+
+            await this.client.query(createSequenceSQL);
+        }));
+    }
+
+    private async createTables(tables: TableMetadataWithData[]): Promise<void> {
+        await Promise.all(tables.map(async (table) => {
+            console.log(`Creating table: '${table.table_name}'`);
+
+            const createTableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
+
+            await this.client.query(createTableSQL);
+
+            const insertDataSQL = this.generateSQLForInsertingData(table);
+
+            await this.client.query(insertDataSQL);
+        }));
+    }
+
+    private async createIndexes(indexes: IndexType[]): Promise<void> {
+        await Promise.all(indexes.map(async (index) => {
+            console.log(`Creating index: '${index.index_name}'`);
+
+            const createIndexSQL = this.generateSQLForCreatingIndexes(index);
+
+            await this.client.query(createIndexSQL);
+        }));
+    }
+
+    private async createViews(views: ViewType[]): Promise<void> {
+        await Promise.all(views.map(async (view) => {
+            console.log(`Creating view: '${view.name}'`);
+
+            const createViewSQL = this.generateSQLForCreatingViews(view);
+
+            await this.client.query(createViewSQL);
+        }));
+    }
 
     async getData(tableName: string | null): Promise<DatabaseType> {
         try {
@@ -285,6 +375,16 @@ export class PostgresAdapter implements DatabaseAdapter {
                 }
             });
 
+            const views = (await this.client.query(`
+                SELECT 
+                    viewname as name,
+                    definition
+                FROM 
+                    pg_views
+                WHERE 
+                    schemaname = $1;
+            `, [this.schema])).rows;
+
             // writeFileSync('./test/indexes.json', JSON.stringify(indexes, null, 2));
 
             const databaseData = await Promise.all(tableMetadata.map(async (table) => {
@@ -314,10 +414,11 @@ export class PostgresAdapter implements DatabaseAdapter {
                 userDefinedEnumTypes: userDefinedEnumTypes,
                 sequences: sequences,
                 indexes: indexes,
+                views: views,
                 tables: databaseData
             };
 
-            writeFileSync('./test/data.json', JSON.stringify(finalData, null, 2));
+            writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
             return finalData
@@ -335,58 +436,13 @@ export class PostgresAdapter implements DatabaseAdapter {
 
             await this.client.query(`BEGIN`);
 
-            await Promise.all(data.userDefinedEnumTypes.map(async (enumType) => {
-                console.log(`Creating type: '${enumType.typename}'`);
+            await this.dropEverything(data);
 
-                const createEnumSQL = `
-                DROP TYPE IF EXISTS ${enumType.typename};
-                CREATE TYPE ${enumType.typename} AS ENUM 
-                    (${enumType.labels.map(label => `'${label}'`).join(', ')});`;
-
-                await this.client.query(createEnumSQL);
-            }));
-
-            await Promise.all(data.sequences.map(async (sequence) => {
-                console.log(`Creating sequence: '${sequence.sequence_name}'`);
-
-                const createSequenceSQL = `
-                    CREATE SEQUENCE IF NOT EXISTS ${sequence.sequence_name}
-                        START WITH ${sequence.start_value}
-                        MINVALUE ${sequence.minimum_value}
-                        MAXVALUE ${sequence.maximum_value}
-                        INCREMENT BY ${sequence.increment_by}
-                        ${sequence.cycle_option ? 'CYCLE' : 'NO CYCLE'}
-                        CACHE 1;
-                `;
-
-                // appendFileSync('./test/sequence.sql', createSequenceSQL);
-
-                await this.client.query(createSequenceSQL);
-            }));
-
-            await Promise.all(data.tables.map(async (table) => {
-                await this.client.query(`DROP TABLE IF EXISTS ${table.table_name} CASCADE`);
-
-                console.log(`Creating table: '${table.table_name}'`);
-
-                const createTableSQL = this.generateSQLForCreatingTables(table.table_name, table.columns);
-
-                await this.client.query(createTableSQL);
-
-                // console.log(`Inserting data into table: '${table.table_name}'`);
-
-                const insertDataSQL = this.generateSQLForInsertingData(table);
-
-                await this.client.query(insertDataSQL);
-            }));
-
-            await Promise.all(data.indexes.map(async (index) => {
-                console.log(`Creating index: '${index.index_name}'`);
-
-                const createIndexSQL = this.generateSQLForCreatingIndexes(index);
-
-                await this.client.query(createIndexSQL);
-            }));
+            await this.createEnumTypes(data.userDefinedEnumTypes);
+            await this.createSequences(data.sequences);
+            await this.createTables(data.tables);
+            await this.createIndexes(data.indexes);
+            await this.createViews(data.views);
 
             await this.client.query(`COMMIT`);
 

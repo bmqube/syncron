@@ -18,7 +18,13 @@ export type DatabaseType = {
     userDefinedEnumTypes: UserDefinedEnumTypes[];
     sequences: Sequences[];
     indexes: IndexType[];
+    views: ViewType[];
     tables: TableMetadataWithData[];
+}
+
+export type ViewType = {
+    name: string;
+    definition: string;
 }
 
 export type ColumnType = {

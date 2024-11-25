@@ -27,6 +27,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
             name: this.db,
             userDefinedEnumTypes: [],
             sequences: [],
+            views: [],
             indexes: [],
             tables: [],
         };
