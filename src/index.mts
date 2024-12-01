@@ -35,7 +35,7 @@ const handleListAdapters = () => {
 };
 
 commander
-    .version('0.0.13')
+    .version('0.0.14')
     .description('Syncron is a command-line tool for synchronizing data between different databases');
 
 commander

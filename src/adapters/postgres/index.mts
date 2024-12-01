@@ -1,7 +1,6 @@
 import type { Client as ClientType } from 'pg';
 import pg from 'pg';
 import { ColumnType, DatabaseAdapter, DatabaseType, IndexType, Sequences, TableMetadataWithData, UserDefinedEnumTypes, ViewType } from '../../types.mjs';
-import { appendFileSync, writeFileSync } from 'fs';
 
 const { Client } = pg;
 
@@ -74,7 +73,7 @@ export class PostgresAdapter implements DatabaseAdapter {
             return columnDef;
         }).join(',\n');
 
-        appendFileSync('./test/create.sql', `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`);
+        // appendFileSync('./test/create.sql', `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`);
 
         return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columns}\n);\n\n`;
     }
@@ -118,7 +117,7 @@ export class PostgresAdapter implements DatabaseAdapter {
     private generateSQLForCreatingIndexes(index: IndexType): string {
         const indexStatement = `CREATE ${index.is_unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${index.index_name} ON ${index.table_name} USING ${index.index_type} (${index.column_name});`;
 
-        appendFileSync('./test/index.sql', `${indexStatement}\n\n`);
+        // appendFileSync('./test/index.sql', `${indexStatement}\n\n`);
 
         return indexStatement;
     }
@@ -418,7 +417,7 @@ export class PostgresAdapter implements DatabaseAdapter {
                 tables: databaseData
             };
 
-            writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
+            // writeFileSync('./test/data.json', JSON.stringify(databaseData, null, 2));
 
             console.log(`Successfully retrieved data from database: '${this.db}'`);
             return finalData
